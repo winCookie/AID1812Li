@@ -1,0 +1,250 @@
+'''
+'''
+
+from socket import *
+import pymysql
+import os,sys
+import time
+import signal
+
+#定义全局变量
+if len(sys.argv)<3:
+    print('''Start as:
+    python3 dict_server.py 0.0.0.0 8000
+    ''')
+    sys.exit(0)
+
+HOST=sys.argv[1]
+PORT=int(sys.argv[2])
+ADDR=(HOST,PORT)
+DICT_TEST="./dict.txt"
+
+def do_hist(c,db,data):
+    l=data.split(' ')
+    name=l[1]
+    cursor=db.cursor()
+    sql="select * from hist where name='%s' order by id desc limit 10"%name
+    cursor.execute(sql)
+    r=cursor.fetchall()
+    if not r:
+        c.send(b'FAIL')
+        return
+    else:
+        c.send(b'OK')
+        time.sleep(0.1)
+    for i in r:
+        msg="%s    %s    %s"%(i[1],i[2],i[3])
+        c.send(msg.encode())
+        time.sleep(0.1)
+    c.send(b'##')
+
+
+
+def do_child(c,db):
+    while True:
+        #接受客户端请求
+        data=c.recv(1024).decode()
+        print(c.getpeername(),':',data)
+        if not data or data[0]=="E":
+            c.close()
+            sys.exit()
+        elif data[0]=="R":
+            do_register(c,db,data)
+        elif data[0]=="L":
+            do_lgoin(c,db,data)
+        elif data[0]=="Q":
+            do_query(c,db,data)
+        elif data[0]=="H":
+            do_hist(c,db,data)
+
+
+def do_query(c,db,data):
+    l=data.split(' ')
+    name=l[1]
+    word=l[2]
+
+    #插入历史记录
+    cursor=db.cursor()
+    tm=time.ctime()
+    sql="insert into hist (name,word,time) values('%s','%s','%s')"%(name,word,tm)
+    cursor.execute(sql)
+    try:
+        cursor.execute(sql)
+        db.commit()
+    except:
+        db.rollback()
+
+    #单词本查找
+    f=open("static/dict.txt")
+
+    for line in f:
+        tmp=line.split(' ')[0] #提取单词
+        # print(tmp)
+        if tmp>word:
+            break
+        elif tmp==word:
+            c.send(line.encode())
+            f.close()
+            return
+    c.send("没有找到该单词".encode())
+    f.close()
+
+
+def do_register(c,db,data):
+    l=data.split(' ')
+    name=l[1]
+    passwd=l[2]
+    cursor=db.cursor()
+
+    sql="select * from user where name='%s'"%name
+    cursor.execute(sql)
+    r=cursor.fetchone()
+    if r!=None:
+        c.send(b'EXISTS')
+        return
+    
+    #插入用户
+    sql="insert into user(name,passwd) values('%s','%s')"%(name,passwd)
+    try:
+        cursor.execute(sql)
+        db.commit()
+        c.send(b'OK')
+    except:
+        db.rollback()
+        c.send(b"FAIL")
+
+def do_lgoin(c,db,data):
+    l=data.split(' ')
+    name=l[1]
+    passwd=l[2]
+    r=cursor=db.cursor()
+    if r==None:
+        c.send(b'FAIL')
+    else:
+        c.send(b'OK')
+
+
+    sql="select * from user where name='%s' and passwd='%s'"%(name,passwd)
+
+
+
+
+
+#搭建网络连接
+def main():
+    db=pymysql.connect("localhost","root","123456","dict")
+    #创建套接字
+    s=socket()
+    s.setsockopt(SOL_SOCKET,SO_REUSEADDR,1)
+    s.bind(ADDR)
+    s.listen(5)
+    
+
+    #处理僵尸进程
+    signal.signal(signal.SIGCHLD,signal.SIG_IGN)
+
+    while True:
+        try:
+            c,addr=s.accept()
+            print("Connect from",addr)
+        except KeyboardInterrupt:
+            s.close()
+            sys.exit("服务器退出!")
+        except Exception as e:
+            print(e)
+            continue
+        
+        #创建子进程
+        pid=os.fork()
+        if pid==0:
+            s.close()
+            do_child(c,db)
+            sys.exit()
+        else:
+            c.close()
+
+if __name__=="__main__":
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# '''
+# 2019/2/26
+# 自我能力判断,设计字典服务器和客户端
+# '''
+# from select import select
+# from socket import *
+# import sys,os
+
+
+# class MYDict(object):
+#     def __init__(self,server_addr,static_dir):
+#         self.server_addres=server_addr
+#         self.create_socket()
+#         self.bind()
+    
+#     #创建套接字
+#     def create_socket(self):
+#         self.sockfd=socket()
+#         self.sockfd.setsockopt(SOL_SOCKET,SO_REUSEADDR,1)
+    
+#     #绑定地址
+#     def bind(self):
+#         self.sockfd.bind(self.server_addres)
+#         self.ip=self.server_addres[0]
+#         self.port=self.server_addres[1]
+
+#     #启动服务
+#     def serve_forever(self):
+#         self.sockfd.listen()
+#         print("Listen the port%d"%self.port)
+#         while True:
+#             try:
+#                 connfd,addr=self.sockfd._accept()
+#             except KeyboardInterrupt:
+#                 self.sockfd.close()
+#                 sys.exit("退出字典!")
+#             except Exception as e:
+#                 print("Error:",e)
+#                 continue
+#             #创建fork多进程处理请求
+#             clienpid=os.fork()
+#             if clienpid<0:
+#                 print("创建进程失败!")
+#             elif clienpid==0:
+#                 get_dict(connfd)
+#             else:
+                 
+
+# if __name__=="__main__":
+#     #使用者子集设定的address
+#     server_addr=("0.0.0.0",8000)
+#     #字典文本存放的目录
+#     dict_dir=".static"
+#     #创建服务器对象
+#     httpd=MYDict(server_addr,dict_dir)
+#     #启动服务
+#     httpd.serve_forever()
+    
